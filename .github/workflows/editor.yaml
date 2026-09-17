@@ -174,7 +174,8 @@ jobs:
           $answers = @(
             "y"
             "y"
-            $env:MAGIC_HEADER$env:ENCRYPTED_HEADER
+            $env:MAGIC_HEADER
+            $env:ENCRYPTED_HEADER
             "n"
             "n"
             "n"
