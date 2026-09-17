@@ -1,4 +1,4 @@
-name: Build Secure Godot 4.7 .NET Web Release Template
+name: Build Secure Godot 4.7 Web Release Template
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build-web-release:
-    name: Build Web .NET Release Template
+    name: Build Web Release Template
     runs-on: windows-2025
 
     env:
@@ -237,41 +237,41 @@ jobs:
           }
 
       # ============================================================
-      # BUILD .NET WEB RELEASE
+      # BUILD WEB RELEASE
       # ============================================================
 
-      - name: Build Web .NET Release Template
+      - name: Build Web Release Template
         shell: pwsh
         working-directory: godot
         run: |
           Write-Host "========================================"
-          Write-Host "Building Web .NET Release Template"
+          Write-Host "Building Web Release Template"
           Write-Host "========================================"
 
           scons `
             platform=web `
             target=template_release `
-            module_mono_enabled=yes
+            -j2
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Web .NET release template build failed."
+            Write-Error "Web release template build failed."
             exit $LASTEXITCODE
           }
 
           Write-Host ""
-          Write-Host "Web .NET release template build completed."
+          Write-Host "Web release template build completed."
 
       # ============================================================
       # INSPECT OUTPUT
       # ============================================================
 
-      - name: Inspect Web .NET Release output
+      - name: Inspect Web Release output
         shell: pwsh
         run: |
           $bin = "$env:GITHUB_WORKSPACE\godot\bin"
 
           Write-Host "========================================"
-          Write-Host "WEB .NET RELEASE OUTPUT"
+          Write-Host "WEB RELEASE OUTPUT"
           Write-Host "========================================"
 
           $webFiles = Get-ChildItem $bin -Recurse -File |
@@ -280,7 +280,7 @@ jobs:
             }
 
           if ($webFiles.Count -eq 0) {
-            Write-Error "Web .NET release template ZIP was not found."
+            Write-Error "Web release template ZIP was not found."
             exit 1
           }
 
@@ -293,7 +293,7 @@ jobs:
       # PREPARE ARTIFACT
       # ============================================================
 
-      - name: Prepare Web .NET Release artifact
+      - name: Prepare Web Release artifact
         shell: pwsh
         run: |
           $bin = "$env:GITHUB_WORKSPACE\godot\bin"
@@ -317,7 +317,7 @@ jobs:
             Select-Object -First 1
 
           if (-not $webRelease) {
-            Write-Error "Web .NET release template was not found."
+            Write-Error "Web release template was not found."
             exit 1
           }
 
@@ -326,7 +326,7 @@ jobs:
             "$artifact\godot.web.template_release.zip" `
             -Force
 
-          Write-Host "Selected Web .NET release template:"
+          Write-Host "Selected Web release template:"
           Write-Host $webRelease.FullName
 
       # ============================================================
@@ -348,7 +348,7 @@ jobs:
           $bytes = ($files | Measure-Object -Property Length -Sum).Sum
           $mb = [math]::Round($bytes / 1MB, 2)
 
-          Write-Host "Web .NET Release Template: $mb MB"
+          Write-Host "Web Release Template: $mb MB"
 
           if ($bytes -gt 450MB) {
             Write-Error "Artifact exceeds the 450 MB safety threshold."
@@ -359,7 +359,7 @@ jobs:
       # UPLOAD
       # ============================================================
 
-      - name: Upload Web .NET Release Template
+      - name: Upload Web Release Template
         uses: actions/upload-artifact@v4
         with:
           name: Godot-Secure-4.7-Web-DotNet-Template-Release
