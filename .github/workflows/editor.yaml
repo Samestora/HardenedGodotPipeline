@@ -234,7 +234,7 @@ jobs:
         working-directory: godot
         run: |
           $editor = ".\bin\godot.windows.editor.x86_64.mono.exe"
-          $console = ".\bin\godot.windows.editor.x86_64.console.mono.exe"
+          $console = ".\bin\godot.windows.editor.x86_64.mono.console.exe"
 
           if (-not (Test-Path $editor)) {
             Write-Error "Mono editor was not found: $editor"
@@ -437,46 +437,29 @@ jobs:
           $artifact = "$env:GITHUB_WORKSPACE\editor-artifact"
 
           if (Test-Path $artifact) {
-            Remove-Item `
-              $artifact `
-              -Recurse `
-              -Force
+            Remove-Item $artifact -Recurse -Force
           }
 
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $artifact | Out-Null
+          New-Item -ItemType Directory -Force -Path $artifact | Out-Null
 
-          # Copy both .NET editor executables.
-          Get-ChildItem `
-            $bin `
-            -File |
-            Where-Object {
-              $_.Name -like "godot.windows.editor.x86_64.mono*"
-            } |
-            ForEach-Object {
-              Copy-Item `
-                $_.FullName `
-                $artifact `
-                -Force
-            }
+          Copy-Item `
+            "$bin\godot.windows.editor.x86_64.mono.exe" `
+            "$artifact\" `
+            -Force
 
-          # Copy GodotSharp runtime/assemblies.
+          Copy-Item `
+            "$bin\godot.windows.editor.x86_64.mono.console.exe" `
+            "$artifact\" `
+            -Force
+
           Copy-Item `
             "$bin\GodotSharp" `
             "$artifact\GodotSharp" `
             -Recurse `
             -Force
 
-          Write-Host "========================================"
-          Write-Host "Final artifact contents"
-          Write-Host "========================================"
-
-          Get-ChildItem `
-            $artifact `
-            -Recurse `
-            -File |
+          Write-Host "Final artifact:"
+          Get-ChildItem $artifact -Recurse -File |
             Select-Object FullName,
               @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
             Format-Table -AutoSize
