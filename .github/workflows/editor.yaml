@@ -20,11 +20,9 @@ jobs:
       PYTHONIOENCODING: "utf-8"
 
     steps:
-
       # ============================================================
-      # CHECKOUT GODOT
+      # CHECKOUT
       # ============================================================
-
       - name: Checkout Godot 4.7
         uses: actions/checkout@v4
         with:
@@ -33,11 +31,9 @@ jobs:
           submodules: recursive
           path: godot
 
-
       # ============================================================
-      # .NET SDK
+      # .NET
       # ============================================================
-
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v4
         with:
@@ -48,11 +44,9 @@ jobs:
         run: |
           dotnet --info
 
-
       # ============================================================
-      # PYTHON / SCONS
+      # PYTHON
       # ============================================================
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -67,17 +61,16 @@ jobs:
           python --version
           scons --version
 
-
       # ============================================================
-      # DOWNLOAD GODOT SECURE
+      # DOWNLOAD GODOT SECURE V6
       # ============================================================
-
       - name: Download Godot Secure v6
         shell: pwsh
         run: |
           $url = "https://github.com/KnifeXRage/Godot-Secure/releases/download/v6.0-Released-Universal/Godot.Secure.AES-256.Universal.v6.py"
           $script = "$env:GITHUB_WORKSPACE\godot_secure.py"
 
+          Write-Host "Downloading Godot Secure v6..."
           Invoke-WebRequest `
             -Uri $url `
             -OutFile $script
@@ -89,11 +82,9 @@ jobs:
 
           Write-Host "Godot Secure downloaded successfully."
 
-
       # ============================================================
       # VALIDATE SECRETS
       # ============================================================
-
       - name: Validate required secrets
         shell: pwsh
         run: |
@@ -118,7 +109,9 @@ jobs:
 
           Write-Host "All required secrets are present."
 
-
+      # ============================================================
+      # VALIDATE MAGIC HEADERS
+      # ============================================================
       - name: Validate magic headers
         shell: pwsh
         run: |
@@ -134,11 +127,9 @@ jobs:
 
           Write-Host "Magic headers passed validation."
 
-
       # ============================================================
-      # WINDOWS DEPENDENCIES
+      # ACCESSKIT
       # ============================================================
-
       - name: Install AccessKit dependencies
         shell: pwsh
         working-directory: godot
@@ -152,7 +143,9 @@ jobs:
 
           Write-Host "AccessKit installation completed."
 
-
+      # ============================================================
+      # DIRECT3D 12 SDK
+      # ============================================================
       - name: Install Direct3D 12 SDK dependencies
         shell: pwsh
         working-directory: godot
@@ -166,16 +159,16 @@ jobs:
 
           Write-Host "Direct3D 12 SDK installation completed."
 
-
       # ============================================================
       # GODOT SECURE
       # ============================================================
-
       - name: Run Godot Secure v6
         shell: pwsh
         run: |
           $script = "$env:GITHUB_WORKSPACE\godot_secure.py"
           $godot = "$env:GITHUB_WORKSPACE\godot"
+
+          Write-Host "Starting Godot Secure v6..."
 
           $answers = @(
             "y"
@@ -187,31 +180,27 @@ jobs:
             "n"
           ) -join "`n"
 
-          Write-Host "========================================"
-          Write-Host "Running Godot Secure v6"
-          Write-Host "========================================"
-
           $answers | python -X utf8 $script $godot
 
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Godot Secure failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
+          $exitCode = $LASTEXITCODE
+
+          Write-Host "Godot Secure exit code: $exitCode"
+
+          if ($exitCode -ne 0) {
+            Write-Error "Godot Secure failed with exit code $exitCode"
+            exit $exitCode
           }
 
           Write-Host "Godot Secure completed successfully."
 
-
       # ============================================================
-      # BUILD .NET EDITOR
+      # BUILD WINDOWS .NET EDITOR
       # ============================================================
-
       - name: Build Windows .NET Editor
         shell: pwsh
         working-directory: godot
         run: |
-          Write-Host "========================================"
-          Write-Host "Building Windows .NET Editor"
-          Write-Host "========================================"
+          Write-Host "Building Windows .NET editor..."
 
           scons `
             platform=windows `
@@ -222,20 +211,19 @@ jobs:
 
           $exitCode = $LASTEXITCODE
 
+          Write-Host "SCons exit code: $exitCode"
+
           if ($exitCode -ne 0) {
-            Write-Error "Windows .NET editor build failed with exit code $exitCode."
+            Write-Error "Windows .NET editor build failed."
             exit $exitCode
           }
 
-          Write-Host ""
-          Write-Host "Windows .NET editor build completed successfully."
-
+          Write-Host "Windows .NET editor build completed."
 
       # ============================================================
-      # VERIFY GENERATED EDITOR
+      # VERIFY MONO EDITOR
       # ============================================================
-
-      - name: Verify .NET Editor
+      - name: Verify .NET Editor binaries
         shell: pwsh
         working-directory: godot
         run: |
@@ -243,8 +231,8 @@ jobs:
           $console = ".\bin\godot.windows.editor.x86_64.mono.console.exe"
 
           Write-Host "Checking:"
-          Write-Host $editor
-          Write-Host $console
+          Write-Host "  $editor"
+          Write-Host "  $console"
 
           if (-not (Test-Path $editor)) {
             Write-Error "Mono editor was not found: $editor"
@@ -256,66 +244,30 @@ jobs:
             exit 1
           }
 
-          Write-Host ""
-          Write-Host "Mono editor:"
-
-          Get-Item $editor |
-            Select-Object FullName,
-              @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
-            Format-Table -AutoSize
-
-          Write-Host "Mono console editor:"
-
-          Get-Item $console |
-            Select-Object FullName,
-              @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
-            Format-Table -AutoSize
-
-
-      # ============================================================
-      # CLEAN OLD GENERATED GLUE
-      # ============================================================
-
-      - name: Clean generated Mono glue
-        shell: pwsh
-        working-directory: godot
-        run: |
-          Write-Host "========================================"
-          Write-Host "Cleaning generated Mono glue"
-          Write-Host "========================================"
-
-          $glueRoot = ".\modules\mono\glue\GodotSharp"
-
-          if (Test-Path $glueRoot) {
-            Remove-Item `
-              $glueRoot `
-              -Recurse `
-              -Force
-
-            Write-Host "Removed previous generated GodotSharp glue."
-          }
-          else {
-            Write-Host "No previous generated glue found."
-          }
-
+          Write-Host "Both .NET editor binaries were found."
 
       # ============================================================
       # GENERATE MONO GLUE
       # ============================================================
-
       - name: Generate Mono glue
         shell: pwsh
         working-directory: godot
         run: |
+          $editor = ".\bin\godot.windows.editor.x86_64.mono.console.exe"
+          $glueDir = ".\modules\mono\glue"
+
           Write-Host "========================================"
           Write-Host "Generating Mono glue"
           Write-Host "========================================"
-
-          $editor = ".\bin\godot.windows.editor.x86_64.mono.exe"
-          $glueDir = ".\modules\mono\glue"
+          Write-Host "Using editor:"
+          Write-Host "  $editor"
+          Write-Host ""
+          Write-Host "Using glue directory:"
+          Write-Host "  $glueDir"
+          Write-Host ""
 
           if (-not (Test-Path $editor)) {
-            Write-Error "Mono editor was not found: $editor"
+            Write-Error "Mono console editor was not found: $editor"
             exit 1
           }
 
@@ -326,21 +278,12 @@ jobs:
               -Path $glueDir | Out-Null
           }
 
-          Write-Host "Using editor:"
-          Write-Host $editor
-
-          Write-Host ""
-          Write-Host "Using glue directory:"
-          Write-Host $glueDir
-
-          Write-Host ""
           Write-Host "Starting Godot glue generation..."
-          Write-Host ""
 
           & $editor `
             --headless `
             --generate-mono-glue `
-            "$glueDir"
+            "modules/mono/glue"
 
           $exitCode = $LASTEXITCODE
 
@@ -353,70 +296,54 @@ jobs:
           Write-Host ""
           Write-Host "Checking generated API directories..."
 
-          $apiDir = ".\modules\mono\glue\GodotSharp\GodotSharp\Generated"
-          $editorApiDir = ".\modules\mono\glue\GodotSharp\GodotSharpEditor\Generated"
+          $generatedRuntime = ".\modules\mono\glue\GodotSharp\GodotSharp\Generated"
+          $generatedEditor = ".\modules\mono\glue\GodotSharp\GodotSharpEditor\Generated"
 
-          if (Test-Path $apiDir) {
-            $apiFiles = Get-ChildItem `
-              $apiDir `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue
-
-            Write-Host "GodotSharp generated files: $($apiFiles.Count)"
+          if (Test-Path $generatedRuntime) {
+            Write-Host "GodotSharp Generated directory found:"
+            Write-Host "  $generatedRuntime"
           }
           else {
-            Write-Host "GodotSharp Generated directory was not found."
+            Write-Warning "GodotSharp Generated directory was not found."
           }
 
-          if (Test-Path $editorApiDir) {
-            $editorApiFiles = Get-ChildItem `
-              $editorApiDir `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue
-
-            Write-Host "GodotSharpEditor generated files: $($editorApiFiles.Count)"
+          if (Test-Path $generatedEditor) {
+            Write-Host "GodotSharpEditor Generated directory found:"
+            Write-Host "  $generatedEditor"
           }
           else {
-            Write-Host "GodotSharpEditor Generated directory was not found."
+            Write-Warning "GodotSharpEditor Generated directory was not found."
           }
 
           Write-Host ""
           Write-Host "Glue directory contents:"
-
           Get-ChildItem `
-            $glueDir `
+            -Path $glueDir `
             -Recurse `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Select-Object FullName,
-              @{Name="SizeKB";Expression={[math]::Round($_.Length / 1KB, 2)}} |
-            Format-Table -AutoSize
+            -File |
+            Select-Object FullName
 
           if ($exitCode -ne 0) {
-            Write-Error "Mono glue generation failed with exit code $exitCode."
+            Write-Error "Mono glue generation failed with exit code $exitCode"
             exit $exitCode
           }
 
-          if (-not (Test-Path $apiDir)) {
-            Write-Error "GodotSharp generated API directory was not created."
+          if (-not (Test-Path $generatedRuntime)) {
+            Write-Error "Mono glue generation completed without generating GodotSharp/Generated."
             exit 1
           }
 
-          if (-not (Test-Path $editorApiDir)) {
-            Write-Error "GodotSharpEditor generated API directory was not created."
+          if (-not (Test-Path $generatedEditor)) {
+            Write-Error "Mono glue generation completed without generating GodotSharpEditor/Generated."
             exit 1
           }
 
           Write-Host ""
           Write-Host "Mono glue generation completed successfully."
 
-
       # ============================================================
-      # BUILD GODOTSHARP
+      # BUILD GODOTSHARP ASSEMBLIES
       # ============================================================
-
       - name: Build GodotSharp assemblies
         shell: pwsh
         working-directory: godot
@@ -432,179 +359,154 @@ jobs:
 
           $exitCode = $LASTEXITCODE
 
-          Write-Host ""
-          Write-Host "build_assemblies.py exit code: $exitCode"
+          Write-Host "Assembly build exit code: $exitCode"
 
           if ($exitCode -ne 0) {
-            Write-Error "GodotSharp assembly build failed with exit code $exitCode."
+            Write-Error "GodotSharp assembly build failed."
             exit $exitCode
           }
 
-          if (-not (Test-Path ".\bin\GodotSharp")) {
-            Write-Error "GodotSharp directory was not created."
-            exit 1
-          }
-
-          Write-Host ""
           Write-Host "GodotSharp assemblies built successfully."
 
-
       # ============================================================
-      # INSPECT FINAL OUTPUT
+      # VERIFY GODOTSHARP
       # ============================================================
-
-      - name: Inspect .NET editor output
+      - name: Verify GodotSharp runtime
         shell: pwsh
         working-directory: godot
         run: |
-          Write-Host "========================================"
-          Write-Host "Final .NET editor output"
-          Write-Host "========================================"
+          $godotSharp = ".\bin\GodotSharp"
 
-          $bin = ".\bin"
+          Write-Host "Checking GodotSharp directory..."
 
-          Write-Host ""
-          Write-Host "Executables:"
+          if (-not (Test-Path $godotSharp)) {
+            Write-Error "GodotSharp directory was not generated: $godotSharp"
+            exit 1
+          }
+
+          Write-Host "GodotSharp directory found."
 
           Get-ChildItem `
-            $bin `
+            -Path $godotSharp `
+            -Recurse `
             -File |
-            Where-Object {
-              $_.Name -like "godot.windows.editor.x86_64.mono*"
-            } |
-            Select-Object Name,
-              @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
-            Format-Table -AutoSize
-
-          Write-Host ""
-          Write-Host "GodotSharp contents:"
-
-          if (Test-Path "$bin\GodotSharp") {
-            Get-ChildItem `
-              "$bin\GodotSharp" `
-              -Recurse `
-              -File |
-              Select-Object FullName,
-                @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
-              Format-Table -AutoSize
-          }
-          else {
-            Write-Error "GodotSharp directory does not exist."
-            exit 1
-          }
-
-          if (-not (Test-Path "$bin\godot.windows.editor.x86_64.mono.exe")) {
-            Write-Error "Normal .NET editor executable was not found."
-            exit 1
-          }
-
-          if (-not (Test-Path "$bin\godot.windows.editor.x86_64.mono.console.exe")) {
-            Write-Error "Console .NET editor executable was not found."
-            exit 1
-          }
-
-          Write-Host ""
-          Write-Host "All required .NET editor files exist."
-
+            Select-Object FullName
 
       # ============================================================
-      # PREPARE ARTIFACT
+      # CREATE PACKAGE DIRECTORY
       # ============================================================
-
-      - name: Prepare .NET editor artifact
+      - name: Prepare editor package
         shell: pwsh
+        working-directory: godot
         run: |
-          $bin = "$env:GITHUB_WORKSPACE\godot\bin"
-          $artifact = "$env:GITHUB_WORKSPACE\editor-artifact"
+          $package = "$env:GITHUB_WORKSPACE\godot-editor-package"
 
-          if (Test-Path $artifact) {
+          if (Test-Path $package) {
             Remove-Item `
-              $artifact `
               -Recurse `
-              -Force
+              -Force `
+              $package
           }
 
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path $artifact | Out-Null
+            -Path $package | Out-Null
+
+          Write-Host "Copying .NET editor binaries..."
 
           Copy-Item `
-            "$bin\godot.windows.editor.x86_64.mono.exe" `
-            "$artifact\" `
-            -Force
+            ".\bin\godot.windows.editor.x86_64.mono.exe" `
+            $package
 
           Copy-Item `
-            "$bin\godot.windows.editor.x86_64.mono.console.exe" `
-            "$artifact\" `
-            -Force
+            ".\bin\godot.windows.editor.x86_64.mono.console.exe" `
+            $package
+
+          Write-Host "Copying GodotSharp..."
 
           Copy-Item `
-            "$bin\GodotSharp" `
-            "$artifact\GodotSharp" `
+            ".\bin\GodotSharp" `
+            "$package\GodotSharp" `
             -Recurse `
             -Force
 
-          Write-Host "========================================"
-          Write-Host "Final artifact contents"
-          Write-Host "========================================"
-
+          Write-Host ""
+          Write-Host "Editor package contents:"
           Get-ChildItem `
-            $artifact `
+            -Path $package `
             -Recurse `
             -File |
-            Select-Object FullName,
-              @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
-            Format-Table -AutoSize
-
+            Select-Object FullName, Length
 
       # ============================================================
-      # ARTIFACT SIZE
+      # CHECK PACKAGE SIZE
       # ============================================================
-
-      - name: Check editor artifact size
+      - name: Check editor package size
         shell: pwsh
         run: |
-          $artifact = "$env:GITHUB_WORKSPACE\editor-artifact"
+          $package = "$env:GITHUB_WORKSPACE\godot-editor-package"
+
+          if (-not (Test-Path $package)) {
+            Write-Error "Editor package directory does not exist."
+            exit 1
+          }
 
           $files = Get-ChildItem `
-            $artifact `
+            -Path $package `
             -Recurse `
             -File
 
-          if ($files.Count -eq 0) {
-            Write-Error "Editor artifact is empty."
+          $sizeBytes = ($files | Measure-Object -Property Length -Sum).Sum
+          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
+
+          Write-Host "Editor package size: $sizeMB MB"
+
+          # Safety limit: 450 MB
+          if ($sizeBytes -gt (450MB)) {
+            Write-Error "Editor package exceeds the 450 MB safety limit."
             exit 1
           }
 
-          $bytes = (
-            $files |
-            Measure-Object `
-              -Property Length `
-              -Sum
-          ).Sum
-
-          $mb = [math]::Round(
-            $bytes / 1MB,
-            2
-          )
-
-          Write-Host "Total .NET editor artifact: $mb MB"
-
-          if ($bytes -gt 450MB) {
-            Write-Error "Editor artifact exceeds the 450 MB safety threshold."
-            exit 1
-          }
-
-
       # ============================================================
-      # UPLOAD
+      # UPLOAD NORMAL .NET EDITOR
       # ============================================================
-
-      - name: Upload Windows .NET Editor
+      - name: Upload .NET Editor
         uses: actions/upload-artifact@v4
         with:
-          name: Godot-Secure-4.7-Windows-DotNet-Editor
-          path: editor-artifact/
+          name: godot-4.7-secure-windows-dotnet-editor
+          path: godot-editor-package
           if-no-files-found: error
           retention-days: 7
+
+      # ============================================================
+      # FINAL SUMMARY
+      # ============================================================
+      - name: Build summary
+        shell: pwsh
+        working-directory: godot
+        run: |
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "BUILD SUCCESSFUL"
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "Godot branch: 4.7"
+          Write-Host "Platform: Windows"
+          Write-Host "Target: .NET Editor"
+          Write-Host "Mono: Enabled"
+          Write-Host "AccessKit: Enabled"
+          Write-Host "Direct3D 12 SDK: Enabled"
+          Write-Host ""
+          Write-Host "Artifacts:"
+          Write-Host "  godot-4.7-secure-windows-dotnet-editor"
+          Write-Host ""
+          Write-Host "Binaries:"
+          Write-Host "  godot.windows.editor.x86_64.mono.exe"
+          Write-Host "  godot.windows.editor.x86_64.mono.console.exe"
+          Write-Host ""
+          Write-Host "GodotSharp:"
+          Write-Host "  Included"
+          Write-Host ""
+          Write-Host "Retention: 7 days"
+          Write-Host "========================================"
