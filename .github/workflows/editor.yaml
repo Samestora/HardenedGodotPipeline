@@ -1,0 +1,367 @@
+name: Build Secure Godot 4.7 .NET Editor
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-editor:
+    name: Build Windows Secure .NET Editor
+    runs-on: windows-2025
+
+    env:
+      SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.GODOT_SECURE_KEY }}
+      MAGIC_HEADER: ${{ secrets.MAGIC_HEADER }}
+      ENCRYPTED_HEADER: ${{ secrets.ENCRYPTED_HEADER }}
+
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT GODOT 4.7
+      # ============================================================
+
+      - name: Checkout Godot 4.7
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: 4.7
+          submodules: recursive
+          path: godot
+
+      # ============================================================
+      # .NET SDK
+      # ============================================================
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Verify .NET SDK
+        shell: pwsh
+        run: |
+          dotnet --info
+
+      # ============================================================
+      # PYTHON / SCONS
+      # ============================================================
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SCons
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade scons
+
+      # ============================================================
+      # DOWNLOAD GODOT SECURE
+      # ============================================================
+
+      - name: Download Godot Secure v6
+        shell: pwsh
+        run: |
+          $url = "https://github.com/KnifeXRage/Godot-Secure/releases/download/v6.0-Released-Universal/Godot.Secure.AES-256.Universal.v6.py"
+          $script = "$env:GITHUB_WORKSPACE\godot_secure.py"
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $script
+
+          if (-not (Test-Path $script)) {
+            Write-Error "Godot Secure script was not downloaded."
+            exit 1
+          }
+
+          Write-Host "Godot Secure downloaded successfully."
+
+      # ============================================================
+      # VALIDATE SECRETS
+      # ============================================================
+
+      - name: Validate required secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+
+          if ([string]::IsNullOrWhiteSpace($env:SCRIPT_AES256_ENCRYPTION_KEY)) {
+            $missing += "GODOT_SECURE_KEY"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:MAGIC_HEADER)) {
+            $missing += "MAGIC_HEADER"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:ENCRYPTED_HEADER)) {
+            $missing += "ENCRYPTED_HEADER"
+          }
+
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Validate magic headers
+        shell: pwsh
+        run: |
+          if ($env:MAGIC_HEADER -notmatch '^[A-Za-z0-9]+$') {
+            Write-Error "MAGIC_HEADER must contain only letters and numbers."
+            exit 1
+          }
+
+          if ($env:ENCRYPTED_HEADER -notmatch '^[A-Za-z0-9]+$') {
+            Write-Error "ENCRYPTED_HEADER must contain only letters and numbers."
+            exit 1
+          }
+
+      # ============================================================
+      # ACCESSKIT
+      # ============================================================
+
+      - name: Install AccessKit dependencies
+        shell: pwsh
+        working-directory: godot
+        run: |
+          python misc/scripts/install_accesskit.py
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "AccessKit installation failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # DIRECT3D 12
+      # ============================================================
+
+      - name: Install Direct3D 12 SDK dependencies
+        shell: pwsh
+        working-directory: godot
+        run: |
+          python misc/scripts/install_d3d12_sdk_windows.py
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Direct3D 12 SDK installation failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # RUN GODOT SECURE
+      # ============================================================
+
+      - name: Run Godot Secure v6
+        shell: pwsh
+        run: |
+          $script = "$env:GITHUB_WORKSPACE\godot_secure.py"
+          $godot = "$env:GITHUB_WORKSPACE\godot"
+
+          $answers = @(
+            "y"
+            "y"
+            $env:MAGIC_HEADER
+            $env:ENCRYPTED_HEADER
+            "n"
+            "n"
+            "n"
+          ) -join "`n"
+
+          $answers | python -X utf8 $script $godot
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Godot Secure failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # BUILD .NET EDITOR
+      # ============================================================
+
+      - name: Build Windows .NET Editor
+        shell: pwsh
+        working-directory: godot
+        run: |
+          Write-Host "========================================"
+          Write-Host "Building Windows .NET Editor"
+          Write-Host "========================================"
+
+          scons `
+            platform=windows `
+            target=editor `
+            production=yes `
+            module_mono_enabled=yes `
+            -j2
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Windows .NET editor build failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # GENERATE MONO GLUE
+      # ============================================================
+
+      - name: Generate Mono glue
+        shell: pwsh
+        working-directory: godot
+        run: |
+          $editor = "bin\godot.windows.editor.x86_64.mono.exe"
+
+          if (-not (Test-Path $editor)) {
+            Write-Error "Mono editor was not found: $editor"
+            exit 1
+          }
+
+          Write-Host "Generating Mono glue..."
+
+          & $editor `
+            --headless `
+            --generate-mono-glue `
+            modules/mono/glue
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Mono glue generation failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # BUILD GODOTSHARP
+      # ============================================================
+
+      - name: Build GodotSharp assemblies
+        shell: pwsh
+        working-directory: godot
+        run: |
+          Write-Host "========================================"
+          Write-Host "Building GodotSharp assemblies"
+          Write-Host "========================================"
+
+          python modules/mono/build_scripts/build_assemblies.py `
+            --godot-output-dir ./bin `
+            --godot-platform=windows
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "GodotSharp assembly build failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # INSPECT EDITOR OUTPUT
+      # ============================================================
+
+      - name: Inspect .NET editor output
+        shell: pwsh
+        run: |
+          $bin = "$env:GITHUB_WORKSPACE\godot\bin"
+
+          Write-Host "========================================"
+          Write-Host ".NET EDITOR OUTPUT"
+          Write-Host "========================================"
+
+          Get-ChildItem $bin -Recurse -File |
+            Where-Object {
+              $_.Name -like "godot.windows.editor.x86_64.mono*"
+            } |
+            Select-Object FullName,
+              @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
+            Format-Table -AutoSize
+
+          if (-not (Test-Path "$bin\godot.windows.editor.x86_64.mono.exe")) {
+            Write-Error "Normal .NET editor executable was not found."
+            exit 1
+          }
+
+          if (-not (Test-Path "$bin\godot.windows.editor.x86_64.console.mono.exe")) {
+            Write-Error "Console .NET editor executable was not found."
+            exit 1
+          }
+
+          if (-not (Test-Path "$bin\GodotSharp")) {
+            Write-Error "GodotSharp directory was not generated."
+            exit 1
+          }
+
+      # ============================================================
+      # PREPARE ARTIFACT
+      # ============================================================
+
+      - name: Prepare .NET editor artifact
+        shell: pwsh
+        run: |
+          $bin = "$env:GITHUB_WORKSPACE\godot\bin"
+          $artifact = "$env:GITHUB_WORKSPACE\editor-artifact"
+
+          if (Test-Path $artifact) {
+            Remove-Item $artifact -Recurse -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifact |
+            Out-Null
+
+          # .NET editor executables
+          Get-ChildItem $bin -File |
+            Where-Object {
+              $_.Name -like "godot.windows.editor.x86_64.mono*"
+            } |
+            ForEach-Object {
+              Copy-Item $_.FullName $artifact -Force
+            }
+
+          # GodotSharp is required by the .NET editor.
+          Copy-Item `
+            "$bin\GodotSharp" `
+            "$artifact\GodotSharp" `
+            -Recurse `
+            -Force
+
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "FINAL .NET EDITOR ARTIFACT"
+          Write-Host "========================================"
+
+          Get-ChildItem $artifact -Recurse -File |
+            Select-Object FullName,
+              @{Name="SizeMB";Expression={[math]::Round($_.Length / 1MB, 2)}} |
+            Format-Table -AutoSize
+
+      # ============================================================
+      # SIZE CHECK
+      # ============================================================
+
+      - name: Check editor artifact size
+        shell: pwsh
+        run: |
+          $artifact = "$env:GITHUB_WORKSPACE\editor-artifact"
+
+          $files = Get-ChildItem $artifact -Recurse -File
+          $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+          $mb = [math]::Round($bytes / 1MB, 2)
+
+          Write-Host ""
+          Write-Host "Total .NET editor artifact: $mb MB"
+
+          if ($bytes -gt 450MB) {
+            Write-Error "Editor artifact exceeds the 450 MB safety threshold."
+            exit 1
+          }
+
+      # ============================================================
+      # UPLOAD
+      # ============================================================
+
+      - name: Upload Windows .NET Editor
+        uses: actions/upload-artifact@v4
+        with:
+          name: Godot-Secure-4.7-Windows-DotNet-Editor
+          path: editor-artifact/
+          if-no-files-found: error
+          retention-days: 7
