@@ -1,90 +1,281 @@
-name: Web Export Release
+name: Web Release 4.7
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build-web-template:
-    runs-on: windows-latest
+  build-web:
+    name: Build Godot Secure Web Release
+    runs-on: ubuntu-24.04
 
     env:
-      SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+      SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.GODOT_SECURE_KEY }}
+      MAGIC_HEADER: ${{ secrets.MAGIC_HEADER }}
+      ENCRYPTED_HEADER: ${{ secrets.ENCRYPTED_HEADER }}
+
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
-      - name: Checkout Godot
+
+      # ============================================================
+      # CHECKOUT GODOT 4.7
+      # ============================================================
+      - name: Checkout Godot 4.7
         uses: actions/checkout@v4
         with:
+          repository: godotengine/godot
+          ref: 4.7
           submodules: recursive
+          path: godot
 
-      - name: Setup Python
+      # ============================================================
+      # PYTHON
+      # ============================================================
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install SCons
-        shell: pwsh
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install scons
+          python -m pip install --upgrade scons
 
-      - name: Install Web dependencies
-        shell: pwsh
-        run: |
-          git submodule update --init --recursive
+          python --version
+          scons --version
 
+      # ============================================================
+      # EMSCRIPTEN
+      # ============================================================
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 4.0.10
           actions-cache-folder: emsdk-cache
 
-      - name: Show tool versions
-        shell: pwsh
+      # ============================================================
+      # VERIFY EMSCRIPTEN
+      # ============================================================
+      - name: Verify Emscripten
+        shell: bash
         run: |
-          python --version
-          scons --version
           emcc --version
 
-      - name: Build Web Release Template - Non Mono
-        shell: pwsh
+      # ============================================================
+      # DOWNLOAD GODOT SECURE V6
+      # ============================================================
+      - name: Download Godot Secure v6
+        shell: bash
         run: |
-          scons platform=web target=template_release production=yes
+          URL="https://github.com/KnifeXRage/Godot-Secure/releases/download/v6.0-Released-Universal/Godot.Secure.AES-256.Universal.v6.py"
+          SCRIPT="$GITHUB_WORKSPACE/godot_secure.py"
 
-      - name: Verify Web Template
-        shell: pwsh
-        run: |
-          Write-Host "Web templates:"
-          Get-ChildItem -Path bin -Recurse -File |
-            Where-Object {
-              $_.Name -match "godot\.web\.template"
-            } |
-            Select-Object FullName, Length
+          echo "Downloading Godot Secure v6..."
 
-      - name: Prepare Web Template Artifact
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path artifacts/web | Out-Null
+          curl -L \
+            "$URL" \
+            -o "$SCRIPT"
 
-          $files = Get-ChildItem -Path bin -Recurse -File |
-            Where-Object {
-              $_.Name -match "^godot\.web\.template_release"
-            }
-
-          if ($files.Count -eq 0) {
-            Write-Error "No Web release template was produced."
+          if [ ! -f "$SCRIPT" ]; then
+            echo "Godot Secure script was not downloaded."
             exit 1
-          }
+          fi
 
-          foreach ($file in $files) {
-            Copy-Item $file.FullName artifacts/web/ -Force
-          }
+          echo "Godot Secure downloaded successfully."
 
-          Write-Host "Prepared files:"
-          Get-ChildItem artifacts/web -File
+      # ============================================================
+      # VALIDATE SECRETS
+      # ============================================================
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          missing=()
 
-      - name: Upload Web Template
+          if [ -z "$SCRIPT_AES256_ENCRYPTION_KEY" ]; then
+            missing+=("GODOT_SECURE_KEY")
+          fi
+
+          if [ -z "$MAGIC_HEADER" ]; then
+            missing+=("MAGIC_HEADER")
+          fi
+
+          if [ -z "$ENCRYPTED_HEADER" ]; then
+            missing+=("ENCRYPTED_HEADER")
+          fi
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing required secret(s): ${missing[*]}"
+            exit 1
+          fi
+
+          echo "All required secrets are present."
+
+      # ============================================================
+      # VALIDATE MAGIC HEADERS
+      # ============================================================
+      - name: Validate magic headers
+        shell: bash
+        run: |
+          if [[ ! "$MAGIC_HEADER" =~ ^[A-Za-z0-9]+$ ]]; then
+            echo "MAGIC_HEADER must contain only letters and numbers."
+            exit 1
+          fi
+
+          if [[ ! "$ENCRYPTED_HEADER" =~ ^[A-Za-z0-9]+$ ]]; then
+            echo "ENCRYPTED_HEADER must contain only letters and numbers."
+            exit 1
+          fi
+
+          echo "Magic headers passed validation."
+
+      # ============================================================
+      # GODOT SECURE
+      # ============================================================
+      - name: Run Godot Secure v6
+        shell: bash
+        run: |
+          SCRIPT="$GITHUB_WORKSPACE/godot_secure.py"
+          GODOT="$GITHUB_WORKSPACE/godot"
+
+          echo "Starting Godot Secure v6..."
+
+          printf '%s\n' \
+            "y" \
+            "y" \
+            "$MAGIC_HEADER" \
+            "$ENCRYPTED_HEADER" \
+            "n" \
+            "n" \
+            "n" |
+            python -X utf8 "$SCRIPT" "$GODOT"
+
+          EXIT_CODE=$?
+
+          echo "Godot Secure exit code: $EXIT_CODE"
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "Godot Secure failed."
+            exit "$EXIT_CODE"
+          fi
+
+          echo "Godot Secure completed successfully."
+
+      # ============================================================
+      # BUILD NON-MONO WEB RELEASE TEMPLATE
+      # ============================================================
+      - name: Build Web Release Template
+        shell: bash
+        working-directory: godot
+        run: |
+          echo "========================================"
+          echo "Building Web Release Template"
+          echo "========================================"
+
+          scons \
+            platform=web \
+            target=template_release \
+            production=yes \
+            -j2
+
+          EXIT_CODE=$?
+
+          echo "SCons exit code: $EXIT_CODE"
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "Web template build failed."
+            exit "$EXIT_CODE"
+          fi
+
+          echo "Web template build completed."
+
+      # ============================================================
+      # VERIFY WEB TEMPLATE
+      # ============================================================
+      - name: Verify Web template
+        shell: bash
+        working-directory: godot
+        run: |
+          echo "Searching for Web release template..."
+
+          FOUND=0
+
+          while IFS= read -r -d '' FILE; do
+            echo "FOUND: $FILE"
+            ls -lh "$FILE"
+            FOUND=1
+          done < <(
+            find bin \
+              -type f \
+              -name 'godot.web.template_release*' \
+              -print0
+          )
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No Web release template was generated."
+            echo ""
+            echo "Contents of bin:"
+            find bin -maxdepth 2 -type f | sort
+            exit 1
+          fi
+
+          echo ""
+          echo "Web template verification successful."
+
+      # ============================================================
+      # PREPARE TEMPLATE PACKAGE
+      # ============================================================
+      - name: Prepare Web template package
+        shell: bash
+        working-directory: godot
+        run: |
+          PACKAGE="$GITHUB_WORKSPACE/godot-web-template"
+
+          rm -rf "$PACKAGE"
+          mkdir -p "$PACKAGE"
+
+          find bin \
+            -type f \
+            -name 'godot.web.template_release*' \
+            -exec cp {} "$PACKAGE/" \;
+
+          echo "Web template package:"
+          find "$PACKAGE" \
+            -type f \
+            -exec ls -lh {} \;
+
+      # ============================================================
+      # UPLOAD WEB TEMPLATE
+      # ============================================================
+      - name: Upload Web Release Template
         uses: actions/upload-artifact@v4
         with:
-          name: godot-web-template-release
-          path: artifacts/web/
+          name: godot-4.7-secure-web-template-release
+          path: godot-web-template
           if-no-files-found: error
+          retention-days: 7
+
+      # ============================================================
+      # SUMMARY
+      # ============================================================
+      - name: Build summary
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "BUILD SUCCESSFUL"
+          echo "========================================"
+          echo ""
+          echo "Godot branch: 4.7"
+          echo "Platform: Web"
+          echo "Target: template_release"
+          echo "Mono: Disabled"
+          echo ""
+          echo "Artifact:"
+          echo "  godot-4.7-secure-web-template-release"
+          echo ""
+          echo "========================================"

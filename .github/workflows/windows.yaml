@@ -1,84 +1,298 @@
 name: Editor Windows 4.7
+
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-editor:
-    runs-on: windows-latest
+    name: Build Windows Secure Editor
+    runs-on: windows-2025
 
     env:
-      SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+      SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.GODOT_SECURE_KEY }}
+      MAGIC_HEADER: ${{ secrets.MAGIC_HEADER }}
+      ENCRYPTED_HEADER: ${{ secrets.ENCRYPTED_HEADER }}
+
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
-      - name: Checkout Godot
+
+      # ============================================================
+      # CHECKOUT GODOT 4.7
+      # ============================================================
+      - name: Checkout Godot 4.7
         uses: actions/checkout@v4
         with:
+          repository: godotengine/godot
+          ref: 4.7
           submodules: recursive
+          path: godot
 
-      - name: Setup Python
+      # ============================================================
+      # PYTHON
+      # ============================================================
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install SCons
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install scons
+          python -m pip install --upgrade scons
 
-      - name: Update submodules
+          python --version
+          scons --version
+
+      # ============================================================
+      # DOWNLOAD GODOT SECURE V6
+      # ============================================================
+      - name: Download Godot Secure v6
         shell: pwsh
         run: |
-          git submodule update --init --recursive
+          $url = "https://github.com/KnifeXRage/Godot-Secure/releases/download/v6.0-Released-Universal/Godot.Secure.AES-256.Universal.v6.py"
+          $script = "$env:GITHUB_WORKSPACE\godot_secure.py"
 
-      - name: Build Windows Editor - Non Mono
-        shell: pwsh
-        run: |
-          scons platform=windows target=editor production=yes
+          Write-Host "Downloading Godot Secure v6..."
 
-      - name: Verify Editor
-        shell: pwsh
-        run: |
-          Write-Host "Checking editor output..."
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $script
 
-          $editor = Get-ChildItem -Path bin -Recurse -File |
-            Where-Object {
-              $_.Name -match "^godot\.windows\.editor" -and
-              $_.Name -notmatch "\.mono\."
-            }
-
-          if ($editor.Count -eq 0) {
-            Write-Error "Non-Mono Godot editor was not found."
+          if (-not (Test-Path $script)) {
+            Write-Error "Godot Secure script was not downloaded."
             exit 1
           }
 
-          $editor | Select-Object FullName, Length
+          Write-Host "Godot Secure downloaded successfully."
 
-      - name: Prepare Editor Artifact
+      # ============================================================
+      # VALIDATE SECRETS
+      # ============================================================
+      - name: Validate required secrets
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts/editor | Out-Null
+          $missing = @()
 
-          $editor = Get-ChildItem -Path bin -Recurse -File |
-            Where-Object {
-              $_.Name -match "^godot\.windows\.editor" -and
-              $_.Name -notmatch "\.mono\."
-            } |
-            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($env:SCRIPT_AES256_ENCRYPTION_KEY)) {
+            $missing += "GODOT_SECURE_KEY"
+          }
 
-          if (-not $editor) {
-            Write-Error "Could not locate non-Mono editor."
+          if ([string]::IsNullOrWhiteSpace($env:MAGIC_HEADER)) {
+            $missing += "MAGIC_HEADER"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:ENCRYPTED_HEADER)) {
+            $missing += "ENCRYPTED_HEADER"
+          }
+
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
             exit 1
           }
 
-          Copy-Item $editor.FullName artifacts/editor/ -Force
+          Write-Host "All required secrets are present."
 
-          Write-Host "Editor prepared:"
-          Get-ChildItem artifacts/editor
+      # ============================================================
+      # VALIDATE MAGIC HEADERS
+      # ============================================================
+      - name: Validate magic headers
+        shell: pwsh
+        run: |
+          if ($env:MAGIC_HEADER -notmatch '^[A-Za-z0-9]+$') {
+            Write-Error "MAGIC_HEADER must contain only letters and numbers."
+            exit 1
+          }
 
+          if ($env:ENCRYPTED_HEADER -notmatch '^[A-Za-z0-9]+$') {
+            Write-Error "ENCRYPTED_HEADER must contain only letters and numbers."
+            exit 1
+          }
+
+          Write-Host "Magic headers passed validation."
+
+      # ============================================================
+      # ACCESSKIT
+      # ============================================================
+      - name: Install AccessKit dependencies
+        shell: pwsh
+        working-directory: godot
+        run: |
+          python misc/scripts/install_accesskit.py
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "AccessKit installation failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # DIRECT3D 12 SDK
+      # ============================================================
+      - name: Install Direct3D 12 SDK dependencies
+        shell: pwsh
+        working-directory: godot
+        run: |
+          python misc/scripts/install_d3d12_sdk_windows.py
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Direct3D 12 SDK installation failed."
+            exit $LASTEXITCODE
+          }
+
+      # ============================================================
+      # GODOT SECURE
+      # ============================================================
+      - name: Run Godot Secure v6
+        shell: pwsh
+        run: |
+          $script = "$env:GITHUB_WORKSPACE\godot_secure.py"
+          $godot = "$env:GITHUB_WORKSPACE\godot"
+
+          Write-Host "Starting Godot Secure v6..."
+
+          $answers = @(
+            "y"
+            "y"
+            $env:MAGIC_HEADER
+            $env:ENCRYPTED_HEADER
+            "n"
+            "n"
+            "n"
+          ) -join "`n"
+
+          $answers | python -X utf8 $script $godot
+
+          $exitCode = $LASTEXITCODE
+
+          Write-Host "Godot Secure exit code: $exitCode"
+
+          if ($exitCode -ne 0) {
+            Write-Error "Godot Secure failed with exit code $exitCode"
+            exit $exitCode
+          }
+
+          Write-Host "Godot Secure completed successfully."
+
+      # ============================================================
+      # BUILD WINDOWS NON-MONO EDITOR
+      # ============================================================
+      - name: Build Windows Editor
+        shell: pwsh
+        working-directory: godot
+        run: |
+          Write-Host "Building Windows non-Mono editor..."
+
+          scons `
+            platform=windows `
+            target=editor `
+            production=yes `
+            -j2
+
+          $exitCode = $LASTEXITCODE
+
+          Write-Host "SCons exit code: $exitCode"
+
+          if ($exitCode -ne 0) {
+            Write-Error "Windows editor build failed."
+            exit $exitCode
+          }
+
+          Write-Host "Windows editor build completed."
+
+      # ============================================================
+      # VERIFY EDITOR
+      # ============================================================
+      - name: Verify Editor binaries
+        shell: pwsh
+        working-directory: godot
+        run: |
+          $editor = ".\bin\godot.windows.editor.x86_64.exe"
+          $console = ".\bin\godot.windows.editor.x86_64.console.exe"
+
+          Write-Host "Checking:"
+          Write-Host "  $editor"
+          Write-Host "  $console"
+
+          if (-not (Test-Path $editor)) {
+            Write-Error "Editor was not found: $editor"
+            exit 1
+          }
+
+          if (-not (Test-Path $console)) {
+            Write-Error "Console editor was not found: $console"
+            exit 1
+          }
+
+          Write-Host "Both non-Mono editor binaries were found."
+
+      # ============================================================
+      # PREPARE PACKAGE
+      # ============================================================
+      - name: Prepare editor package
+        shell: pwsh
+        working-directory: godot
+        run: |
+          $package = "$env:GITHUB_WORKSPACE\godot-editor-package"
+
+          if (Test-Path $package) {
+            Remove-Item -Recurse -Force $package
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $package | Out-Null
+
+          Copy-Item `
+            ".\bin\godot.windows.editor.x86_64.exe" `
+            $package
+
+          Copy-Item `
+            ".\bin\godot.windows.editor.x86_64.console.exe" `
+            $package
+
+          Write-Host ""
+          Write-Host "Editor package contents:"
+
+          Get-ChildItem `
+            -Path $package `
+            -Recurse `
+            -File |
+            Select-Object FullName, Length
+
+      # ============================================================
+      # UPLOAD
+      # ============================================================
       - name: Upload Editor
         uses: actions/upload-artifact@v4
         with:
-          name: godot-windows-editor-non-mono
-          path: artifacts/editor/
+          name: godot-4.7-secure-windows-editor
+          path: godot-editor-package
           if-no-files-found: error
+          retention-days: 7
+
+      # ============================================================
+      # SUMMARY
+      # ============================================================
+      - name: Build summary
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "BUILD SUCCESSFUL"
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "Godot branch: 4.7"
+          Write-Host "Platform: Windows"
+          Write-Host "Target: Editor"
+          Write-Host "Mono: Disabled"
+          Write-Host ""
+          Write-Host "Artifact:"
+          Write-Host "  godot-4.7-secure-windows-editor"
+          Write-Host ""
+          Write-Host "========================================"
