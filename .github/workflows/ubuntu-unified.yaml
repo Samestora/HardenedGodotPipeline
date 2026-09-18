@@ -201,6 +201,59 @@ jobs:
 
           echo "Magic headers passed validation."
 
+      # ============================================================
+      # WINDOWS CROSS-COMPILATION DEPENDENCIES
+      #
+      # These are required because Windows is being built from
+      # Ubuntu using MinGW-w64.
+      # ============================================================
+
+      - name: Install Windows cross-compilation dependencies
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "INSTALL WINDOWS CROSS-COMPILATION"
+          echo "DEPENDENCIES"
+          echo "========================================"
+
+          echo ""
+          echo "Installing WinRT dependencies..."
+
+          python3 misc/scripts/install_winrt.py
+
+          if [ "$?" -ne 0 ]; then
+            echo "WinRT dependency installation failed."
+            exit 1
+          fi
+
+          echo ""
+          echo "Installing AccessKit dependencies..."
+
+          python3 misc/scripts/install_accesskit.py
+
+          if [ "$?" -ne 0 ]; then
+            echo "AccessKit dependency installation failed."
+            exit 1
+          fi
+
+          echo ""
+          echo "Installing Direct3D 12 SDK dependencies..."
+
+          python3 misc/scripts/install_d3d12_sdk_windows.py
+
+          if [ "$?" -ne 0 ]; then
+            echo "Direct3D 12 SDK dependency installation failed."
+            exit 1
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "WINDOWS DEPENDENCIES INSTALLED"
+          echo "========================================"
 
       # ============================================================
       # GODOT SECURE V6
