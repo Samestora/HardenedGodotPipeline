@@ -1,0 +1,897 @@
+name: Godot Secure 4.7 - Unified Ubuntu Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-all:
+    name: Secure Once + Build All Targets
+    runs-on: ubuntu-latest
+
+    env:
+      SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.GODOT_SECURE_KEY }}
+      MAGIC_HEADER: ${{ secrets.MAGIC_HEADER }}
+      ENCRYPTED_HEADER: ${{ secrets.ENCRYPTED_HEADER }}
+
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT GODOT 4.7
+      # ============================================================
+
+      - name: Checkout Godot 4.7
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: 4.7
+          submodules: recursive
+          path: godot
+
+      - name: Show Godot version and commit
+        shell: bash
+        working-directory: godot
+        run: |
+          echo "========================================"
+          echo "GODOT SOURCE"
+          echo "========================================"
+          echo ""
+
+          echo "Commit:"
+          git rev-parse HEAD
+
+          echo ""
+          echo "Branch/tag:"
+          git describe --tags --always --dirty
+
+          echo ""
+          echo "Status:"
+          git status --short
+
+
+      # ============================================================
+      # SYSTEM DEPENDENCIES
+      # ============================================================
+
+      - name: Install Ubuntu build dependencies
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            gcc \
+            g++ \
+            python3 \
+            python3-pip \
+            python3-venv \
+            git \
+            curl \
+            unzip \
+            zip \
+            rsync \
+            mingw-w64 \
+            mingw-w64-tools \
+            libx11-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            libasound2-dev \
+            libpulse-dev \
+            libudev-dev
+
+          echo ""
+          echo "Ubuntu dependencies installed."
+
+
+      # ============================================================
+      # VERIFY MINGW
+      # WINDOWS WILL BE CROSS-COMPILED FROM UBUNTU
+      # ============================================================
+
+      - name: Verify MinGW cross compiler
+        shell: bash
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "MINGW TOOLCHAIN"
+          echo "========================================"
+
+          echo ""
+          echo "x86_64-w64-mingw32-gcc:"
+          x86_64-w64-mingw32-gcc --version
+
+          echo ""
+          echo "x86_64-w64-mingw32-g++:"
+          x86_64-w64-mingw32-g++ --version
+
+          echo ""
+          echo "MinGW linker:"
+          x86_64-w64-mingw32-ld --version
+
+
+      # ============================================================
+      # PYTHON / SCONS
+      # ============================================================
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SCons
+        shell: bash
+        run: |
+          set -e
+
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade scons
+
+          echo ""
+          python --version
+          scons --version
+
+
+      # ============================================================
+      # VALIDATE SECRETS
+      # ============================================================
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -e
+
+          missing=()
+
+          if [ -z "$SCRIPT_AES256_ENCRYPTION_KEY" ]; then
+            missing+=("GODOT_SECURE_KEY")
+          fi
+
+          if [ -z "$MAGIC_HEADER" ]; then
+            missing+=("MAGIC_HEADER")
+          fi
+
+          if [ -z "$ENCRYPTED_HEADER" ]; then
+            missing+=("ENCRYPTED_HEADER")
+          fi
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing required secret(s): ${missing[*]}"
+            exit 1
+          fi
+
+          echo "All required secrets are present."
+
+
+      # ============================================================
+      # VALIDATE MAGIC HEADERS
+      # ============================================================
+
+      - name: Validate magic headers
+        shell: bash
+        run: |
+          set -e
+
+          if [[ ! "$MAGIC_HEADER" =~ ^[A-Za-z0-9]+$ ]]; then
+            echo "MAGIC_HEADER must contain only letters and numbers."
+            exit 1
+          fi
+
+          if [[ ! "$ENCRYPTED_HEADER" =~ ^[A-Za-z0-9]+$ ]]; then
+            echo "ENCRYPTED_HEADER must contain only letters and numbers."
+            exit 1
+          fi
+
+          echo "Magic headers passed validation."
+
+
+      # ============================================================
+      # GODOT SECURE V6
+      #
+      # THIS IS THE ONLY TIME GODOT SECURE RUNS.
+      # ============================================================
+
+      - name: Download Godot Secure v6
+        shell: bash
+        run: |
+          set -e
+
+          URL="https://github.com/KnifeXRage/Godot-Secure/releases/download/v6.0-Released-Universal/Godot.Secure.AES-256.Universal.v6.py"
+
+          echo "Downloading Godot Secure v6..."
+
+          curl -L \
+            --fail \
+            --show-error \
+            --silent \
+            "$URL" \
+            -o "$GITHUB_WORKSPACE/godot_secure.py"
+
+          test -f "$GITHUB_WORKSPACE/godot_secure.py"
+
+          echo "Godot Secure downloaded successfully."
+
+
+      - name: Run Godot Secure v6 ONCE
+        shell: bash
+        run: |
+          set -e
+
+          SCRIPT="$GITHUB_WORKSPACE/godot_secure.py"
+          GODOT="$GITHUB_WORKSPACE/godot"
+
+          echo ""
+          echo "========================================"
+          echo "RUNNING GODOT SECURE V6"
+          echo "========================================"
+          echo ""
+          echo "IMPORTANT:"
+          echo "Godot Secure is being executed exactly once."
+          echo "Every platform below will use this same"
+          echo "secured source tree."
+          echo ""
+
+          printf '%s\n' \
+            "y" \
+            "y" \
+            "$MAGIC_HEADER" \
+            "$ENCRYPTED_HEADER" \
+            "n" \
+            "n" \
+            "n" \
+            | python3 -X utf8 "$SCRIPT" "$GODOT"
+
+          EXIT_CODE=$?
+
+          echo ""
+          echo "Godot Secure exit code: $EXIT_CODE"
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "Godot Secure failed."
+            exit "$EXIT_CODE"
+          fi
+
+          echo ""
+          echo "Godot Secure completed successfully."
+
+
+      # ============================================================
+      # VERIFY SECURED SOURCE
+      # ============================================================
+
+      - name: Verify secured source tree
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "SECURED SOURCE TREE"
+          echo "========================================"
+          echo ""
+
+          echo "Original Git commit:"
+          git rev-parse HEAD
+
+          echo ""
+          echo "Modified tracked files:"
+          git diff --name-only || true
+
+          echo ""
+          echo "Untracked files:"
+          git ls-files --others --exclude-standard || true
+
+          echo ""
+          echo "Git status:"
+          git status --short || true
+
+          echo ""
+          echo "The source tree above will now be used"
+          echo "for Windows, Linux, Android and Web."
+
+
+      # ============================================================
+      # BUILD LINUX RELEASE TEMPLATE
+      #
+      # Native Linux build.
+      # ============================================================
+
+      - name: Build Linux x86_64 release template
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "BUILD LINUX X86_64 RELEASE"
+          echo "========================================"
+
+          scons \
+            platform=linuxbsd \
+            target=template_release \
+            arch=x86_64 \
+            production=yes \
+            -j2
+
+          echo ""
+          echo "Linux release build completed."
+
+
+      # ============================================================
+      # VERIFY LINUX
+      # ============================================================
+
+      - name: Verify Linux release template
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          FILE="bin/godot.linuxbsd.template_release.x86_64"
+
+          echo "Checking:"
+          echo "  $FILE"
+
+          if [ ! -f "$FILE" ]; then
+            echo "Linux release template was not found."
+            echo ""
+            echo "bin directory:"
+            ls -lah bin || true
+            exit 1
+          fi
+
+          echo ""
+          echo "Linux release template found:"
+          ls -lh "$FILE"
+
+
+      # ============================================================
+      # BUILD WINDOWS EDITOR
+      #
+      # NON-MONO / NON-.NET
+      #
+      # MinGW cross-compilation from Ubuntu.
+      # ============================================================
+
+      - name: Build Windows non-Mono editor
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "BUILD WINDOWS NON-MONO EDITOR"
+          echo "========================================"
+
+          echo ""
+          echo "Compiler:"
+          x86_64-w64-mingw32-g++ --version | head -n 1
+
+          echo ""
+          echo "Building Windows editor..."
+
+          scons \
+            platform=windows \
+            target=editor \
+            production=yes \
+            -j2
+
+          echo ""
+          echo "Windows editor build completed."
+
+
+      # ============================================================
+      # BUILD WINDOWS RELEASE TEMPLATE
+      # ============================================================
+
+      - name: Build Windows x86_64 release template
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "BUILD WINDOWS X86_64 RELEASE"
+          echo "========================================"
+
+          scons \
+            platform=windows \
+            target=template_release \
+            production=yes \
+            -j2
+
+          echo ""
+          echo "Windows release build completed."
+
+
+      # ============================================================
+      # VERIFY WINDOWS
+      # ============================================================
+
+      - name: Verify Windows outputs
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "VERIFY WINDOWS OUTPUTS"
+          echo "========================================"
+
+          EDITOR="bin/godot.windows.editor.x86_64.exe"
+          CONSOLE="bin/godot.windows.editor.x86_64.console.exe"
+          RELEASE="bin/godot.windows.template_release.x86_64.exe"
+          RELEASE_CONSOLE="bin/godot.windows.template_release.x86_64.console.exe"
+
+          for FILE in \
+            "$EDITOR" \
+            "$CONSOLE" \
+            "$RELEASE" \
+            "$RELEASE_CONSOLE"
+          do
+            echo ""
+            echo "Checking $FILE"
+
+            if [ ! -f "$FILE" ]; then
+              echo "Missing Windows output: $FILE"
+              echo ""
+              echo "Windows binaries currently present:"
+              find bin -maxdepth 1 -type f \
+                -iname '*windows*' \
+                -printf '%f\n' \
+                | sort || true
+              exit 1
+            fi
+
+            ls -lh "$FILE"
+          done
+
+          echo ""
+          echo "All Windows outputs found."
+
+
+      # ============================================================
+      # JAVA 17
+      # ============================================================
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+      # ============================================================
+      # ANDROID SDK
+      # ============================================================
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p "$ANDROID_HOME"
+
+          echo ""
+          echo "========================================"
+          echo "ANDROID SDK"
+          echo "========================================"
+
+          sdkmanager --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "build-tools;35.0.1" \
+            "platforms;android-35" \
+            "cmdline-tools;latest" \
+            "cmake;3.10.2.4988404" \
+            "ndk;28.1.13356709"
+
+          yes | sdkmanager --licenses >/dev/null || true
+
+          echo ""
+          echo "Android SDK:"
+          echo "$ANDROID_HOME"
+
+          echo ""
+          echo "Java:"
+          java -version
+
+          echo ""
+          echo "ADB:"
+          adb version
+
+          echo ""
+          echo "Installed Android packages:"
+          sdkmanager --sdk_root="$ANDROID_HOME" --list_installed \
+            | grep -E \
+              'platform-tools|build-tools;35.0.1|platforms;android-35|cmake;3.10.2.4988404|ndk;28.1.13356709' \
+            || true
+
+
+      # ============================================================
+      # ANDROID ARM32
+      # ============================================================
+
+      - name: Build Android release ARM32
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "BUILD ANDROID ARM32"
+          echo "========================================"
+
+          scons \
+            platform=android \
+            target=template_release \
+            arch=arm32 \
+            production=yes \
+            -j2
+
+          echo ""
+          echo "Android ARM32 build completed."
+
+
+      # ============================================================
+      # ANDROID ARM64
+      #
+      # generate_android_binaries=yes is used on the LAST
+      # architecture to generate android_release.apk.
+      # ============================================================
+
+      - name: Build Android release ARM64
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "BUILD ANDROID ARM64"
+          echo "========================================"
+
+          scons \
+            platform=android \
+            target=template_release \
+            arch=arm64 \
+            production=yes \
+            generate_android_binaries=yes \
+            -j2
+
+          echo ""
+          echo "Android ARM64 build completed."
+
+
+      # ============================================================
+      # VERIFY ANDROID
+      # ============================================================
+
+      - name: Verify Android release template
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          FILE="bin/android_release.apk"
+
+          echo ""
+          echo "========================================"
+          echo "VERIFY ANDROID"
+          echo "========================================"
+
+          if [ ! -f "$FILE" ]; then
+            echo "Android release template was not found:"
+            echo "  $FILE"
+
+            echo ""
+            echo "Android files currently present:"
+            find bin -maxdepth 1 -type f \
+              -iname '*android*' \
+              -printf '%f\n' \
+              | sort || true
+
+            exit 1
+          fi
+
+          ls -lh "$FILE"
+
+
+      # ============================================================
+      # EMSCRIPTEN
+      # ============================================================
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.0
+          actions-cache-folder: emsdk-cache
+
+
+      - name: Verify Emscripten
+        shell: bash
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "EMSCRIPTEN"
+          echo "========================================"
+
+          emcc --version
+
+          echo ""
+          echo "emcc:"
+          command -v emcc
+
+          echo ""
+          echo "em++:"
+          command -v em++
+
+
+      # ============================================================
+      # WEB RELEASE TEMPLATE
+      # ============================================================
+
+      - name: Build Web release template
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "BUILD WEB RELEASE"
+          echo "========================================"
+
+          scons \
+            platform=web \
+            target=template_release \
+            production=yes \
+            -j2
+
+          echo ""
+          echo "Web release build completed."
+
+
+      # ============================================================
+      # VERIFY / RENAME WEB
+      # ============================================================
+
+      - name: Prepare Web release template
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          SOURCE="bin/godot.web.template_release.wasm32.zip"
+          TARGET="bin/web_release.zip"
+
+          echo ""
+          echo "========================================"
+          echo "PREPARE WEB RELEASE"
+          echo "========================================"
+
+          if [ ! -f "$SOURCE" ]; then
+            echo "Web release template was not found:"
+            echo "  $SOURCE"
+
+            echo ""
+            echo "Web files currently present:"
+            find bin -maxdepth 1 -type f \
+              -iname '*web*' \
+              -o -iname '*wasm*' \
+              | sort || true
+
+            exit 1
+          fi
+
+          rm -f "$TARGET"
+
+          mv "$SOURCE" "$TARGET"
+
+          if [ ! -f "$TARGET" ]; then
+            echo "Failed to create web_release.zip."
+            exit 1
+          fi
+
+          echo ""
+          echo "Web release template:"
+          ls -lh "$TARGET"
+
+
+      # ============================================================
+      # FINAL BUILD INVENTORY
+      # ============================================================
+
+      - name: Show final binaries
+        shell: bash
+        working-directory: godot
+        run: |
+          echo ""
+          echo "========================================"
+          echo "FINAL BUILD INVENTORY"
+          echo "========================================"
+
+          echo ""
+          echo "Windows:"
+          find bin -maxdepth 1 -type f \
+            -iname '*windows*' \
+            -printf '%f %s bytes\n' \
+            | sort || true
+
+          echo ""
+          echo "Linux:"
+          find bin -maxdepth 1 -type f \
+            -iname '*linuxbsd*' \
+            -printf '%f %s bytes\n' \
+            | sort || true
+
+          echo ""
+          echo "Android:"
+          find bin -maxdepth 1 -type f \
+            -iname '*android*' \
+            -printf '%f %s bytes\n' \
+            | sort || true
+
+          echo ""
+          echo "Web:"
+          find bin -maxdepth 1 -type f \
+            -iname '*web*' \
+            -printf '%f %s bytes\n' \
+            | sort || true
+
+
+      # ============================================================
+      # PACKAGE FINAL OUTPUTS
+      # ============================================================
+
+      - name: Prepare release package
+        shell: bash
+        working-directory: godot
+        run: |
+          set -e
+
+          PACKAGE="$GITHUB_WORKSPACE/godot-secure-4.7-unified-release"
+
+          rm -rf "$PACKAGE"
+
+          mkdir -p \
+            "$PACKAGE/windows-editor" \
+            "$PACKAGE/windows-release" \
+            "$PACKAGE/linux-release" \
+            "$PACKAGE/android-release" \
+            "$PACKAGE/web-release"
+
+          # Windows editor
+          cp \
+            bin/godot.windows.editor.x86_64.exe \
+            "$PACKAGE/windows-editor/"
+
+          cp \
+            bin/godot.windows.editor.x86_64.console.exe \
+            "$PACKAGE/windows-editor/"
+
+          # Windows release
+          cp \
+            bin/godot.windows.template_release.x86_64.exe \
+            "$PACKAGE/windows-release/"
+
+          cp \
+            bin/godot.windows.template_release.x86_64.console.exe \
+            "$PACKAGE/windows-release/"
+
+          # Linux release
+          cp \
+            bin/godot.linuxbsd.template_release.x86_64 \
+            "$PACKAGE/linux-release/"
+
+          # Android release
+          cp \
+            bin/android_release.apk \
+            "$PACKAGE/android-release/"
+
+          # Web release
+          cp \
+            bin/web_release.zip \
+            "$PACKAGE/web-release/"
+
+          echo ""
+          echo "========================================"
+          echo "RELEASE PACKAGE"
+          echo "========================================"
+
+          find "$PACKAGE" \
+            -type f \
+            -printf '%p %s bytes\n' \
+            | sort
+
+
+      # ============================================================
+      # UPLOAD FINAL ARTIFACT
+      #
+      # ONLY FINISHED BUILDS ARE UPLOADED.
+      # THE GODOT SOURCE TREE IS NOT UPLOADED.
+      # ============================================================
+
+      - name: Upload unified release
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-4.7-secure-unified-ubuntu
+          path: godot-secure-4.7-unified-release
+          if-no-files-found: error
+          retention-days: 7
+
+
+      # ============================================================
+      # FINAL SUMMARY
+      # ============================================================
+
+      - name: Build summary
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "GODOT SECURE 4.7 BUILD COMPLETE"
+          echo "========================================"
+          echo ""
+
+          echo "Runner:"
+          echo "  ubuntu-latest"
+          echo ""
+
+          echo "Godot:"
+          echo "  4.7"
+          echo ""
+
+          echo "Godot Secure:"
+          echo "  v6"
+          echo "  Executions: 1"
+          echo ""
+
+          echo "Targets:"
+          echo "  Windows non-Mono editor"
+          echo "  Windows x86_64 release"
+          echo "  Linux x86_64 release"
+          echo "  Android ARM32 + ARM64 release"
+          echo "  Web WASM release"
+          echo ""
+
+          echo "Architecture:"
+          echo "  One checkout"
+          echo "  One secured source tree"
+          echo "  One Secure execution"
+          echo "  All targets built from that source tree"
+          echo ""
+
+          echo "Artifact:"
+          echo "  godot-4.7-secure-unified-ubuntu"
+          echo ""
+
+          echo "========================================"

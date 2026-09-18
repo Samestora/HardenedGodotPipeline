@@ -1,4 +1,4 @@
-name: Editor Windows 4.7
+name: Complete 4.7 Secure Build
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build-editor:
-    name: Build Windows Secure Editor + Templates
+    name: Build Windows + Web Secure Editor/Templates
     runs-on: windows-2025
 
     env:
@@ -51,6 +51,28 @@ jobs:
 
           python --version
           scons --version
+
+      # ============================================================
+      # EMSCRIPTEN
+      # ============================================================
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.0
+          actions-cache-folder: emsdk-cache
+
+      # ============================================================
+      # VERIFY EMSCRIPTEN
+      # ============================================================
+      - name: Verify Emscripten
+        shell: pwsh
+        run: |
+          Write-Host "Emscripten version:"
+          emcc --version
+
+          Write-Host ""
+          Write-Host "Emscripten compiler:"
+          Get-Command emcc
 
       # ============================================================
       # DOWNLOAD GODOT SECURE V6
@@ -187,7 +209,7 @@ jobs:
           Write-Host "Godot Secure completed successfully."
 
       # ============================================================
-      # BUILD WINDOWS NON-MONO EDITOR
+      # BUILD WINDOWS EDITOR
       # ============================================================
       - name: Build Windows Editor
         shell: pwsh
@@ -205,8 +227,6 @@ jobs:
 
           $exitCode = $LASTEXITCODE
 
-          Write-Host "SCons exit code: $exitCode"
-
           if ($exitCode -ne 0) {
             Write-Error "Windows editor build failed."
             exit $exitCode
@@ -215,16 +235,14 @@ jobs:
           Write-Host "Windows editor build completed."
 
       # ============================================================
-      # VERIFY EDITOR
+      # VERIFY WINDOWS EDITOR
       # ============================================================
-      - name: Verify Editor binaries
+      - name: Verify Windows Editor
         shell: pwsh
         working-directory: godot
         run: |
           $editor = ".\bin\godot.windows.editor.x86_64.exe"
           $console = ".\bin\godot.windows.editor.x86_64.console.exe"
-
-          Write-Host "Checking editor binaries..."
 
           if (-not (Test-Path $editor)) {
             Write-Error "Editor was not found: $editor"
@@ -236,23 +254,17 @@ jobs:
             exit 1
           }
 
-          Write-Host "Editor:"
-          Get-Item $editor | Select-Object FullName, Length, LastWriteTime
-
-          Write-Host "Console:"
-          Get-Item $console | Select-Object FullName, Length, LastWriteTime
-
-          Write-Host "Both non-Mono editor binaries were found."
+          Write-Host "Windows editor binaries verified."
 
       # ============================================================
-      # BUILD WINDOWS RELEASE EXPORT TEMPLATES
+      # BUILD WINDOWS RELEASE TEMPLATE
       # ============================================================
-      - name: Build Windows Release Templates
+      - name: Build Windows Release Template
         shell: pwsh
         working-directory: godot
         run: |
           Write-Host "========================================"
-          Write-Host "Building Windows non-Mono release templates"
+          Write-Host "Building Windows release template"
           Write-Host "========================================"
 
           scons `
@@ -263,26 +275,22 @@ jobs:
 
           $exitCode = $LASTEXITCODE
 
-          Write-Host "SCons exit code: $exitCode"
-
           if ($exitCode -ne 0) {
             Write-Error "Windows release template build failed."
             exit $exitCode
           }
 
-          Write-Host "Windows release template build completed."
+          Write-Host "Windows release template completed."
 
       # ============================================================
-      # VERIFY WINDOWS RELEASE TEMPLATES
+      # VERIFY WINDOWS RELEASE TEMPLATE
       # ============================================================
-      - name: Verify Windows Release Templates
+      - name: Verify Windows Release Template
         shell: pwsh
         working-directory: godot
         run: |
           $template = ".\bin\godot.windows.template_release.x86_64.exe"
           $templateConsole = ".\bin\godot.windows.template_release.x86_64.console.exe"
-
-          Write-Host "Checking release templates..."
 
           if (-not (Test-Path $template)) {
             Write-Error "Windows release template was not found: $template"
@@ -294,30 +302,70 @@ jobs:
             exit 1
           }
 
-          Write-Host "Template:"
-          Get-Item $template | Select-Object FullName, Length, LastWriteTime
-
-          Write-Host "Console template:"
-          Get-Item $templateConsole | Select-Object FullName, Length, LastWriteTime
-
-          Write-Host "Both Windows release templates were found."
+          Write-Host "Windows release templates verified."
 
       # ============================================================
-      # VERIFY SECURE BUILD ARTIFACTS
+      # BUILD WEB RELEASE TEMPLATE
       # ============================================================
-      - name: Inspect Windows binaries
+      - name: Build Web Release Template
         shell: pwsh
         working-directory: godot
         run: |
-          Write-Host ""
           Write-Host "========================================"
-          Write-Host "Windows build artifacts"
+          Write-Host "Building Web release template"
           Write-Host "========================================"
-          Write-Host ""
 
-          Get-ChildItem ".\bin" -Filter "godot.windows.*.exe" |
-            Select-Object Name, Length, LastWriteTime |
-            Format-Table -AutoSize
+          scons `
+            platform=web `
+            target=template_release `
+            production=yes `
+            -j2
+
+          $exitCode = $LASTEXITCODE
+
+          Write-Host "SCons exit code: $exitCode"
+
+          if ($exitCode -ne 0) {
+            Write-Error "Web release template build failed."
+            exit $exitCode
+          }
+
+          Write-Host "Web release template build completed."
+
+      # ============================================================
+      # VERIFY WEB TEMPLATE
+      # ============================================================
+      - name: Verify Web Release Template
+        shell: pwsh
+        working-directory: godot
+        run: |
+          $source = ".\bin\godot.web.template_release.wasm32.zip"
+          $destination = ".\bin\web_release.zip"
+
+          if (-not (Test-Path $source)) {
+            Write-Error "Web release template was not found: $source"
+            exit 1
+          }
+
+          Write-Host "Web template found:"
+          Get-Item $source | Select-Object FullName, Length, LastWriteTime
+
+          if (Test-Path $destination) {
+            Remove-Item -Force $destination
+          }
+
+          Rename-Item `
+            -Path $source `
+            -NewName "web_release.zip"
+
+          if (-not (Test-Path $destination)) {
+            Write-Error "Failed to create web_release.zip"
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Web release template:"
+          Get-Item $destination | Select-Object FullName, Length, LastWriteTime
 
       # ============================================================
       # PREPARE EDITOR PACKAGE
@@ -345,9 +393,7 @@ jobs:
             ".\bin\godot.windows.editor.x86_64.console.exe" `
             $package
 
-          Write-Host ""
-          Write-Host "Editor package contents:"
-
+          Write-Host "Editor package:"
           Get-ChildItem `
             -Path $package `
             -Recurse `
@@ -380,9 +426,7 @@ jobs:
             ".\bin\godot.windows.template_release.x86_64.console.exe" `
             $package
 
-          Write-Host ""
-          Write-Host "Windows template package contents:"
-
+          Write-Host "Windows template package:"
           Get-ChildItem `
             -Path $package `
             -Recurse `
@@ -390,40 +434,33 @@ jobs:
             Select-Object FullName, Length
 
       # ============================================================
-      # CHECK EDITOR PACKAGE SIZE
+      # PREPARE WEB TEMPLATE PACKAGE
       # ============================================================
-      - name: Check Editor Package Size
+      - name: Prepare Web Template Package
         shell: pwsh
+        working-directory: godot
         run: |
-          $package = "$env:GITHUB_WORKSPACE\godot-editor-package"
+          $package = "$env:GITHUB_WORKSPACE\godot-web-template-package"
 
-          $files = Get-ChildItem `
+          if (Test-Path $package) {
+            Remove-Item -Recurse -Force $package
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $package | Out-Null
+
+          Copy-Item `
+            ".\bin\web_release.zip" `
+            $package
+
+          Write-Host "Web template package:"
+          Get-ChildItem `
             -Path $package `
             -Recurse `
-            -File
-
-          $sizeBytes = ($files | Measure-Object -Property Length -Sum).Sum
-          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
-
-          Write-Host "Editor package size: $sizeMB MB"
-
-      # ============================================================
-      # CHECK TEMPLATE PACKAGE SIZE
-      # ============================================================
-      - name: Check Template Package Size
-        shell: pwsh
-        run: |
-          $package = "$env:GITHUB_WORKSPACE\godot-windows-template-package"
-
-          $files = Get-ChildItem `
-            -Path $package `
-            -Recurse `
-            -File
-
-          $sizeBytes = ($files | Measure-Object -Property Length -Sum).Sum
-          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
-
-          Write-Host "Windows template package size: $sizeMB MB"
+            -File |
+            Select-Object FullName, Length
 
       # ============================================================
       # UPLOAD EDITOR
@@ -448,6 +485,17 @@ jobs:
           retention-days: 7
 
       # ============================================================
+      # UPLOAD WEB TEMPLATE
+      # ============================================================
+      - name: Upload Web Release Template
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-4.7-secure-web-release-template
+          path: godot-web-template-package
+          if-no-files-found: error
+          retention-days: 7
+
+      # ============================================================
       # SUMMARY
       # ============================================================
       - name: Build Summary
@@ -459,14 +507,17 @@ jobs:
           Write-Host "========================================"
           Write-Host ""
           Write-Host "Godot branch: 4.7"
-          Write-Host "Platform: Windows"
-          Write-Host "Target: Editor + template_release"
+          Write-Host "Windows editor: YES"
+          Write-Host "Windows release template: YES"
+          Write-Host "Web release template: YES"
           Write-Host "Mono: Disabled"
           Write-Host ""
-          Write-Host "Editor artifact:"
+          Write-Host "Artifacts:"
           Write-Host "  godot-4.7-secure-windows-editor"
-          Write-Host ""
-          Write-Host "Template artifact:"
           Write-Host "  godot-4.7-secure-windows-release-templates"
+          Write-Host "  godot-4.7-secure-web-release-template"
+          Write-Host ""
+          Write-Host "Web template:"
+          Write-Host "  bin\web_release.zip"
           Write-Host ""
           Write-Host "========================================"
