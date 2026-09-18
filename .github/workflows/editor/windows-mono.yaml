@@ -1,4 +1,4 @@
-name: Build Secure Godot 4.7 .NET Editor
+name: Editor Windows 4.7 Mono
 
 on:
   workflow_dispatch:
