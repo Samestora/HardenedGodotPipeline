@@ -1,0 +1,84 @@
+name: Editor Windows 4.7
+on:
+  workflow_dispatch:
+
+jobs:
+  build-editor:
+    runs-on: windows-latest
+
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+
+    steps:
+      - name: Checkout Godot
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SCons
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install scons
+
+      - name: Update submodules
+        shell: pwsh
+        run: |
+          git submodule update --init --recursive
+
+      - name: Build Windows Editor - Non Mono
+        shell: pwsh
+        run: |
+          scons platform=windows target=editor production=yes
+
+      - name: Verify Editor
+        shell: pwsh
+        run: |
+          Write-Host "Checking editor output..."
+
+          $editor = Get-ChildItem -Path bin -Recurse -File |
+            Where-Object {
+              $_.Name -match "^godot\.windows\.editor" -and
+              $_.Name -notmatch "\.mono\."
+            }
+
+          if ($editor.Count -eq 0) {
+            Write-Error "Non-Mono Godot editor was not found."
+            exit 1
+          }
+
+          $editor | Select-Object FullName, Length
+
+      - name: Prepare Editor Artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/editor | Out-Null
+
+          $editor = Get-ChildItem -Path bin -Recurse -File |
+            Where-Object {
+              $_.Name -match "^godot\.windows\.editor" -and
+              $_.Name -notmatch "\.mono\."
+            } |
+            Select-Object -First 1
+
+          if (-not $editor) {
+            Write-Error "Could not locate non-Mono editor."
+            exit 1
+          }
+
+          Copy-Item $editor.FullName artifacts/editor/ -Force
+
+          Write-Host "Editor prepared:"
+          Get-ChildItem artifacts/editor
+
+      - name: Upload Editor
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-windows-editor-non-mono
+          path: artifacts/editor/
+          if-no-files-found: error
