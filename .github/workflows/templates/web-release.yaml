@@ -1,0 +1,90 @@
+name: Web Export Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-web-template:
+    runs-on: windows-latest
+
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+
+    steps:
+      - name: Checkout Godot
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SCons
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install scons
+
+      - name: Install Web dependencies
+        shell: pwsh
+        run: |
+          git submodule update --init --recursive
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.10
+          actions-cache-folder: emsdk-cache
+
+      - name: Show tool versions
+        shell: pwsh
+        run: |
+          python --version
+          scons --version
+          emcc --version
+
+      - name: Build Web Release Template - Non Mono
+        shell: pwsh
+        run: |
+          scons platform=web target=template_release production=yes
+
+      - name: Verify Web Template
+        shell: pwsh
+        run: |
+          Write-Host "Web templates:"
+          Get-ChildItem -Path bin -Recurse -File |
+            Where-Object {
+              $_.Name -match "godot\.web\.template"
+            } |
+            Select-Object FullName, Length
+
+      - name: Prepare Web Template Artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/web | Out-Null
+
+          $files = Get-ChildItem -Path bin -Recurse -File |
+            Where-Object {
+              $_.Name -match "^godot\.web\.template_release"
+            }
+
+          if ($files.Count -eq 0) {
+            Write-Error "No Web release template was produced."
+            exit 1
+          }
+
+          foreach ($file in $files) {
+            Copy-Item $file.FullName artifacts/web/ -Force
+          }
+
+          Write-Host "Prepared files:"
+          Get-ChildItem artifacts/web -File
+
+      - name: Upload Web Template
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-web-template-release
+          path: artifacts/web/
+          if-no-files-found: error
