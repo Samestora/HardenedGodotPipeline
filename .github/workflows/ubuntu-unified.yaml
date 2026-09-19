@@ -402,7 +402,6 @@ jobs:
       # sdkmanager. The setup-android action can attempt to install
       # the obsolete "tools" package.
       # ============================================================
-
       - name: Install Android SDK and NDK
         shell: bash
         run: |
@@ -483,6 +482,25 @@ jobs:
 
           echo ""
           echo "Android SDK / NDK installation complete."
+
+      # ============================================================
+      # INSTALL ANDROID SWAPPY FRAME PACING
+      # ============================================================
+
+      - name: Install Android Swappy
+        working-directory: godot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "INSTALLING ANDROID SWAPPY"
+          echo "========================================"
+
+          python misc/scripts/install_swappy_android.py
+
+          echo ""
+          echo "Swappy installation complete."
 
       # ============================================================
       # VERIFY ANDROID
